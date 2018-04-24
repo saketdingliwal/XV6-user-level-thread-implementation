@@ -22,6 +22,7 @@ struct thread {
   int        state;             /* running, runnable, waiting */
   int        locked_on;           /* the one responsible for its waiting state */
   int         priority;
+  int         counter;
 };
 static thread_t all_thread[MAX_THREAD];
 thread_p  current_thread;
@@ -33,6 +34,8 @@ thread_init(void)
 {
   current_thread = &all_thread[0];
   current_thread->state = RUNNING;
+  current_thread->priority = -1e9;
+  current_thread->counter = 0;
 }
 
 
@@ -74,22 +77,44 @@ thread_schedule(void)
   //    The current thread is the only runnable thread; run it. 
   //   next_thread = current_thread;
   // }
+  for (t = all_thread; t < all_thread + MAX_THREAD; t++) 
+  {
+    if (t->state == RUNNABLE && t != next_thread) 
+    {
+      t->counter +=1;
+      if(t->counter==50)
+      {
+        t->counter=0;
+        if(t->priority<20)
+        {
+          t->priority +=1;
+        }
+      }
+    }
+  }
+
 
   if (next_thread == 0) {
     printf(2, "thread_schedule: no runnable threads; deadlock\n");
     exit();
   }
 
+  if(current_thread==next_thread)
+    current_thread->state = RUNNING;
+
   if (current_thread != next_thread) {         /* switch threads?  */
     next_thread->state = RUNNING;
     thread_switch();
   } else
     next_thread = 0;
+
 }
 
 void 
 thread_create(void (*func)(),int priority)
 {
+  if(priority<0 && priority >20)
+    return;
   thread_p t;
   for (t = all_thread; t < all_thread + MAX_THREAD; t++) {
     if (t->state == FREE) break;
@@ -101,6 +126,7 @@ thread_create(void (*func)(),int priority)
   t->state = RUNNABLE;
   t->locked_on = -1;
   t->priority = priority;
+  t->counter = 0;
 }
 
 void 
@@ -113,13 +139,18 @@ thread_yield(void)
 typedef struct lock_
 {
   int lock_value;
+  thread_p aquirer;
+  int aquirer_org_priority;
 }lock;
 
 lock lock_table[MAX_LOCK];
 void lock_init()
 {
   for(int i=0;i<MAX_LOCK;i++)
+  {
     lock_table[i].lock_value = 0;
+    lock_table[i].aquirer = 0;
+  }
 }
 void busy_wait_acquire(int lock_no)
 {
@@ -128,6 +159,7 @@ void busy_wait_acquire(int lock_no)
     if(lock_table[lock_no].lock_value==0)
     {
       lock_table[lock_no].lock_value = 1;
+      lock_table[lock_no].aquirer = current_thread;
       break;
     }
     thread_yield();
@@ -135,33 +167,45 @@ void busy_wait_acquire(int lock_no)
 }
 void busy_wait_release(int lock_no)
 {
-  lock_table[lock_no].lock_value = 0;
+  if(current_thread==lock_table[lock_no].aquirer)
+    lock_table[lock_no].lock_value = 0;
 }
 
-void non_busy_wait_acquire(int lock_no)
+void non_busy_wait_acquire(int lock_no,int donation)
 {
   while(1)
   {
     if(lock_table[lock_no].lock_value==0)
     {
       lock_table[lock_no].lock_value = 1;
+      lock_table[lock_no].aquirer = current_thread;
+      lock_table[lock_no].aquirer_org_priority = current_thread->priority;
       break;
+    }
+    if(donation==1)
+    {
+      if(current_thread->priority > lock_table[lock_no].aquirer->priority)
+        lock_table[lock_no].aquirer->priority = current_thread->priority;
     }
     current_thread->state = WAITING;
     current_thread->locked_on = lock_no;
     thread_schedule();
   }
 }
-void non_busy_wait_release(int lock_no)
+void non_busy_wait_release(int lock_no,int donation)
 {
-  lock_table[lock_no].lock_value = 0;
-  thread_p t;
-  for (t = all_thread; t < all_thread + MAX_THREAD; t++) 
+  if(current_thread==lock_table[lock_no].aquirer)
   {
-    if (t->state == WAITING && t->locked_on == lock_no) 
+    lock_table[lock_no].lock_value = 0;
+    current_thread->priority = lock_table[lock_no].aquirer_org_priority;
+    thread_p t;
+    for (t = all_thread; t < all_thread + MAX_THREAD; t++) 
     {
-      t->locked_on = -1;
-      t->state = RUNNABLE;
+      if (t->state == WAITING && t->locked_on == lock_no) 
+      {
+        t->locked_on = -1;
+        t->state = RUNNABLE;
+      }
     }
   }
 }
@@ -170,12 +214,25 @@ static void
 mythread(void)
 {
   int i;
-  // non_busy_wait_acquire(0);
-  for (i = 0; i < 5; i++) {
-    printf(1, "my thread 0x%x\n", (int) current_thread);
+  non_busy_wait_acquire(0,1);
+  for (i = 0; i < 10; i++) {
+    printf(1, "my thread 0x%x %d\n", (int) current_thread,current_thread->priority);
     thread_yield();
   }
-  // non_busy_wait_release(0);
+  non_busy_wait_release(0,1);
+  printf(1, "my thread: exit\n");
+  current_thread->state = FREE;
+  thread_schedule();
+}
+
+static void 
+mythread2(void)
+{
+  for(int i=0;i<10;i++)
+  {
+    printf(1,"%d is running\n", current_thread->priority);
+    thread_yield();
+  }
   printf(1, "my thread: exit\n");
   current_thread->state = FREE;
   thread_schedule();
@@ -187,10 +244,13 @@ main(int argc, char *argv[])
 {
   lock_init();
   thread_init();
-  thread_create(mythread,2);
   thread_create(mythread,1);
-  thread_create(mythread,2);
-  thread_create(mythread,2);
-  thread_schedule();
-  return 0;
+  thread_create(mythread2,2);
+  thread_create(mythread,4);
+  thread_yield();
+
+
+
+  current_thread->state = FREE;
+  exit();
 }
