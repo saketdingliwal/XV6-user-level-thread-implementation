@@ -12,7 +12,6 @@
 #define MAX_THREAD  10
 #define MAX_LOCK    10
 
-
 typedef struct thread thread_t, *thread_p;
 typedef struct mutex mutex_t, *mutex_p;
 
@@ -23,6 +22,7 @@ struct thread {
   int        locked_on;           /* the one responsible for its waiting state */
   int         priority;
   int         counter;
+  char*   thread_name;
 };
 static thread_t all_thread[MAX_THREAD];
 thread_p  current_thread;
@@ -36,6 +36,8 @@ thread_init(void)
   current_thread->state = RUNNING;
   current_thread->priority = -1e9;
   current_thread->counter = 0;
+  current_thread->thread_name = (char *)malloc(strlen("init")*sizeof(char));
+  strcpy(current_thread->thread_name,"init");
 }
 
 
@@ -110,23 +112,35 @@ thread_schedule(void)
 
 }
 
-void 
-thread_create(void (*func)(),int priority)
+int 
+thread_create(char * name,void (*func)(),int priority)
 {
   if(priority<0 && priority >20)
-    return;
+  {
+    printf(2,"%s\n","priority value is wrong\n");
+    return -1;
+  }
   thread_p t;
   for (t = all_thread; t < all_thread + MAX_THREAD; t++) {
     if (t->state == FREE) break;
   }
+  if(t==all_thread+MAX_THREAD)
+  {
+    printf(2,"%s\n","No Free Thread is available\n");
+    return -1;
+  }
+
   t->sp = (int) (t->stack + STACK_SIZE);   // set sp to the top of the stack
   t->sp -= 4;                              // space for return address
   * (int *) (t->sp) = (int)func;           // push return address on stack
   t->sp -= 32;                             // space for registers that thread_switch will push
   t->state = RUNNABLE;
+  t->thread_name = (char *)malloc(strlen(name)*sizeof(char));
+  strcpy(t->thread_name,name);
   t->locked_on = -1;
   t->priority = priority;
   t->counter = 0;
+  return 1;
 }
 
 void 
@@ -199,44 +213,69 @@ void non_busy_wait_release(int lock_no,int donation)
     lock_table[lock_no].lock_value = 0;
     current_thread->priority = lock_table[lock_no].aquirer_org_priority;
     thread_p t;
+    thread_p max_priority=0;
     for (t = all_thread; t < all_thread + MAX_THREAD; t++) 
     {
       if (t->state == WAITING && t->locked_on == lock_no) 
       {
-        t->locked_on = -1;
-        t->state = RUNNABLE;
+        if(max_priority==0 || t->priority > max_priority->priority)
+          max_priority = t;
       }
+    }
+    if(max_priority!=0)
+    {
+      max_priority->locked_on = -1;
+      max_priority->state = RUNNABLE;            
     }
   }
 }
 
+
 static void 
-mythread(void)
+mythread3(void)
 {
-  int i;
+  printf(1,"i started\n");
   non_busy_wait_acquire(0,1);
-  for (i = 0; i < 10; i++) {
-    printf(1, "my thread 0x%x %d\n", (int) current_thread,current_thread->priority);
-    thread_yield();
+  for(int i=0;i<10;i++)
+  {
+    printf(1,"i am running %s\n", current_thread->thread_name);
   }
   non_busy_wait_release(0,1);
   printf(1, "my thread: exit\n");
   current_thread->state = FREE;
   thread_schedule();
 }
-
 static void 
 mythread2(void)
 {
-  for(int i=0;i<10;i++)
+  for(int i=0;i<100;i++)
   {
-    printf(1,"%d is running\n", current_thread->priority);
+    printf(1,"%s is running\n", current_thread->thread_name);
     thread_yield();
   }
   printf(1, "my thread: exit\n");
   current_thread->state = FREE;
   thread_schedule();
 }
+
+
+static void 
+mythread(void)
+{
+  int i;
+  non_busy_wait_acquire(0,0);
+  thread_create("mediocre",mythread2,10);
+  thread_create("highest ",mythread3,20);
+  for (i = 0; i < 10; i++) {
+    printf(1, "my thread 0x%x %s\n", (int) current_thread,current_thread->thread_name);
+    thread_yield();
+  }
+  non_busy_wait_release(0,0);
+  printf(1, "my thread: exit\n");
+  current_thread->state = FREE;
+  thread_schedule();
+}
+
 
 
 int 
@@ -244,13 +283,8 @@ main(int argc, char *argv[])
 {
   lock_init();
   thread_init();
-  thread_create(mythread,1);
-  thread_create(mythread2,2);
-  thread_create(mythread,4);
+  thread_create("created_by_main",mythread,1);
   thread_yield();
-
-
-
   current_thread->state = FREE;
   exit();
 }
