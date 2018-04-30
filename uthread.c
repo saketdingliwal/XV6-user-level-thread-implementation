@@ -23,6 +23,7 @@ struct thread {
   int         priority;
   int         counter;
   char*   thread_name;
+  long long int stamp;
 };
 static thread_t all_thread[MAX_THREAD];
 thread_p  current_thread;
@@ -30,6 +31,7 @@ thread_p  next_thread;
 extern void thread_switch(void);
 int starvation = 0;
 int donation = 0;
+long long int switch_stamp = 0;
 void 
 thread_init(void)
 {
@@ -39,6 +41,7 @@ thread_init(void)
   current_thread->counter = 0;
   current_thread->thread_name = (char *)malloc(strlen("init")*sizeof(char));
   strcpy(current_thread->thread_name,"init");
+  current_thread->stamp = 0;
 }
 
 
@@ -55,24 +58,41 @@ thread_schedule(void)
   //   }
   // }
   thread_p max_priority = 0;
+  current_thread->stamp = switch_stamp;
+  switch_stamp+=1;
 
-  for (t = current_thread + 1; t < all_thread + MAX_THREAD; t++) 
+  for (t = all_thread; t < all_thread + MAX_THREAD; t++) 
   {
     if (t->state == RUNNABLE) 
     {
 
       if(max_priority == 0 || t->priority > max_priority->priority)
         max_priority = t;
+      else if(t->priority == max_priority->priority)
+      {
+        if(t->stamp < max_priority->stamp)
+          max_priority = t;
+      }
     }
   }
-  for(t = all_thread; t <= current_thread; t++)
-  {
-    if (t->state == RUNNABLE) 
-    {
-      if(max_priority == 0 || t->priority > max_priority->priority)
-        max_priority = t;
-    }
-  }
+
+  // for (t = current_thread + 1; t < all_thread + MAX_THREAD; t++) 
+  // {
+  //   if (t->state == RUNNABLE) 
+  //   {
+
+  //     if(max_priority == 0 || t->priority > max_priority->priority)
+  //       max_priority = t;
+  //   }
+  // }
+  // for(t = all_thread; t <= current_thread; t++)
+  // {
+  //   if (t->state == RUNNABLE) 
+  //   {
+  //     if(max_priority == 0 || t->priority > max_priority->priority)
+  //       max_priority = t;
+  //   }
+  // }
 
   next_thread = max_priority;
 
@@ -145,6 +165,7 @@ thread_create(char * name,void (*func)(),int priority)
   t->locked_on = -1;
   t->priority = priority;
   t->counter = 0;
+  t->stamp = 0;
   return 1;
 }
 
@@ -203,6 +224,10 @@ void lock_acquire(int lock_no)
     current_thread->locked_on = lock_no;
     thread_schedule();
   }
+  if(lock_table[lock_no].lock_value==1)
+  {
+    printf(2,"some error occured\n");
+  }
   lock_table[lock_no].lock_value = 1;
   lock_table[lock_no].aquirer = current_thread;
   lock_table[lock_no].aquirer_org_priority = current_thread->priority;
@@ -239,6 +264,11 @@ void lock_release(int lock_no)
       {
         if(max_priority==0 || t->priority > max_priority->priority)
           max_priority = t;
+        else if(t->priority == max_priority->priority)
+        {
+          if(t->stamp < max_priority->stamp)
+            max_priority = t;
+        }
       }
     }
     if(max_priority!=0)
